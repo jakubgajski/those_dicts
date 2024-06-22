@@ -1,0 +1,21 @@
+[tool.poetry]
+name = "those-dicts"
+version = "0.1.0"
+description = "Those missing flavors of dict"
+authors = ["Jakub Gajski <jakub.gajski@gmail.com>"]
+license = "MIT"
+readme = "README.md"
+
+
+[tool.poetry.group.test]
+
+
+[tool.poetry.dependencies]
+python = "^3.9"
+[tool.poetry.group.test.dependencies]
+pytest = "^8.0.1"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
