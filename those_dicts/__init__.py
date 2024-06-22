@@ -368,3 +368,15 @@ class TwoWayDict(GraphDict):
         val = self[key]
         dict.__setitem__(self, key, set())
         dict.__setitem__(self, val, set())
+
+    def make_loops(self, *args, **kwargs):
+        """
+        Overrides make_loops to not allow loops.
+
+        Raises
+        -------
+        NotImplementedError
+        """
+        raise NotImplementedError(
+            "make_loops intentionally not implemented for TwoWayDict. It would destroy the structure."
+        )
