@@ -1,6 +1,6 @@
 from collections.abc import Mapping, Iterable, Hashable, Generator
 from types import MappingProxyType
-from typing import Any
+from typing import Any, Union, Optional
 
 
 class BatchedDict(dict):
@@ -9,7 +9,7 @@ class BatchedDict(dict):
     """
 
     def __init__(
-        self, __m: Mapping | Iterable | None = None, nested: bool = False, **kwargs
+        self, __m: Optional[Union[Mapping, Iterable]] = None, nested: bool = False, **kwargs
     ):
         """
         Parameters
@@ -53,7 +53,7 @@ class BatchedDict(dict):
             f"{self.__class__} does not support setdefault! Use .get(key, default) instead."
         )
 
-    def update(self, __m: Mapping | Iterable | None = None, **kwargs):
+    def update(self, __m: Optional[Union[Mapping, Iterable]] = None, **kwargs):
         """
         Overrides default dict update to align with custom __setitem__.
 
@@ -79,7 +79,7 @@ class GraphDict(dict):
     arbitrary destination nodes, based on their source (dict key).
     """
 
-    def __init__(self, __m: Mapping | Iterable | None = None, **kwargs):
+    def __init__(self, __m: Optional[Union[Mapping, Iterable]] = None, **kwargs):
         super().__init__()
         self.update(__m, **kwargs)
 
@@ -136,7 +136,7 @@ class GraphDict(dict):
         else:
             return None
 
-    def pop(self, __key: Hashable) -> set[Hashable] | Hashable:
+    def pop(self, __key: Hashable) -> Union[Hashable, set[Hashable]]:
         """
         Overrides default dict pop to adjust for __getitem__. Due to reindexing, this is an expensive operation.
 
@@ -208,12 +208,12 @@ class GraphDict(dict):
             (key, self[key]) for key in self
         ).keys()  # originally is types.MappingProxyType
 
-    def setdefault(self, __key: Hashable, __default: Hashable | None = None):
+    def setdefault(self, __key: Hashable, __default: Optional[Hashable] = None):
         raise NotImplementedError(
             f"{self.__class__} does not support setdefault! Use .get(key, default) instead."
         )
 
-    def make_loops(self, keys: Iterable | None = None):
+    def make_loops(self, keys: Optional[Iterable] = None):
         """
         Set keys in self to point to themselves.
 
@@ -256,7 +256,7 @@ class GraphDict(dict):
         self.delete_link(key1, key2)
         self.delete_link(key2, key1)
 
-    def update(self, __m: Mapping | Iterable | None = None, **kwargs):
+    def update(self, __m: Optional[Union[Mapping, Iterable]] = None, **kwargs):
         """
         Overrides default dict update to align with custom __setitem__.
 
@@ -311,7 +311,7 @@ class GraphDict(dict):
             for i in lone_indices[::-1]:
                 dict.__delitem__(self, list(self)[i])
 
-    def get_dict(self) -> dict[Hashable, Hashable | set[Hashable]]:
+    def get_dict(self) -> dict[Hashable, Union[Hashable, set[Hashable]]]:
         """
         Parses self into a dict with keys that have at least one value in them.
 
