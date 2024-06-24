@@ -94,17 +94,25 @@ class GraphDict(dict):
         """
         if not isinstance(key, Hashable) or not isinstance(value, Hashable):
             raise TypeError("Both keys and values must be hashable!")
+        if key is None:
+            raise TypeError("Key cannot be None!")
 
         if key in self and value in self:
             dict.__getitem__(self, key).update({list(self).index(value)})
         elif key in self and value not in self:
-            dict.__setitem__(self, value, set())
-            dict.__getitem__(self, key).update({list(self).index(value)})
+            if value is not None:
+                dict.__setitem__(self, value, set())
+                dict.__getitem__(self, key).update({list(self).index(value)})
+            else:
+                pass
         elif key not in self and value in self:
             dict.__setitem__(self, key, {list(self).index(value)})
         else:
-            dict.__setitem__(self, value, set())
-            dict.__setitem__(self, key, {list(self).index(value)})
+            if value is not None:
+                dict.__setitem__(self, value, set())
+                dict.__setitem__(self, key, {list(self).index(value)})
+            else:
+                dict.__setitem__(self, key, set())
 
     def __delitem__(self, key: Hashable):
         """
@@ -268,12 +276,28 @@ class GraphDict(dict):
         if isinstance(__m, Mapping):
             for k, v in __m.items():
                 self[k] = v
+
         elif isinstance(__m, Iterable):
             for k, v in __m:
                 self[k] = v
 
         for k, v in kwargs.items():
             self[k] = v
+
+    def merge(self, other: dict[Hashable, Union[Hashable, set[Hashable]]]):
+        for key in other:
+            other_val = other[key]
+
+            if isinstance(other_val, set):
+                dict.__setitem__(
+                    self, key, self.get(key, set()).union(other_val)
+                )
+            elif other_val is not None:
+                dict.__setitem__(
+                    self, key, self.get(key, set()).add(other_val)
+                )
+            else:
+                continue
 
     def reindex(self):
         """
