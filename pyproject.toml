@@ -5,6 +5,11 @@ description = "Those missing flavors of dict"
 authors = ["Jakub Gajski <jakub.gajski@gmail.com>"]
 license = "MIT"
 readme = "README.md"
+repository = "https://github.com/jakubgajski/those_dicts"
+keywords = ["graph", "batch", "two way", "dict", "dicts", "data structures", "lightweight"]
+packages = [
+    { include = "those_dicts" },
+]
 
 
 [tool.poetry.group.test]
