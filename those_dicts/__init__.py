@@ -1,4 +1,4 @@
-from collections.abc import Mapping, Iterable, Hashable, Generator
+from collections.abc import Mapping, Iterable, Hashable
 from types import MappingProxyType
 from typing import Any, Union, Optional
 
@@ -9,7 +9,10 @@ class BatchedDict(dict):
     """
 
     def __init__(
-        self, __m: Optional[Union[Mapping, Iterable]] = None, nested: bool = False, **kwargs
+        self,
+        __m: Optional[Union[Mapping, Iterable]] = None,
+        nested: bool = False,
+        **kwargs,
     ):
         """
         Parameters
@@ -171,7 +174,7 @@ class GraphDict(dict):
         """
         key = list(self)[-1]
         val = self[key]
-        idx = list(self).index(key)
+        idx = len(self) - 1
         dict.__delitem__(self, key)
         for k in self:
             dict.__getitem__(self, k).discard(idx)
@@ -181,40 +184,55 @@ class GraphDict(dict):
     def keys(self) -> MappingProxyType:
         """
         Overrides default dict keys to return only keys that holds a value.
-        So the definition of key becomes: entry that has a value.
+        So the definition of key becomes: a node that has a corresponding value(s) (outgoing connection).
+        Order not guaranteed.
 
         Returns
         -------
-        Generator
+        MappingProxyType
         """
-        return dict.fromkeys(
-            key for key in self if self[key] is not None
-        ).keys()  # originally is types.MappingProxyType
+        return dict.fromkeys(key for key in self if self[key] is not None).keys()
 
     def values(self) -> MappingProxyType:
         """
         Overrides default dict values to return only entries that have a key referring to it.
-        So the definition of value becomes: entry that has a key.
+        So the definition of value becomes: a node that has a corresponding key (incoming connection).
+        Order not guaranteed.
 
         Returns
         -------
-        Generator
+        MappingProxyType
         """
-        return dict.fromkeys(
-            self[key] for key in self if self[key] is not None
-        ).keys()  # originally is types.MappingProxyType
+        self_list = list(self)
+        has_key = set(self_list[k] for key in self for k in dict.__getitem__(self, key))
+        has_key = [key for key in has_key]
+        return dict.fromkeys(has_key).keys()
 
     def items(self) -> MappingProxyType:
         """
-        Overrides default dict items to align with the union of definitions of keys and values defined above.
+        Overrides default dict items to align with the union of definitions of keys() and values() defined above.
+        Returns every connected pair of nodes (key-value manner) for every key that is either in keys() or in values().
 
         Returns
         -------
-        Generator
+        MappingProxyType
         """
+
+        def setize(x):
+            if isinstance(x, set):
+                return x
+            else:
+                return {x}
+
+        keys = self.keys()
+        values = self.values()
+
         return dict.fromkeys(
-            (key, self[key]) for key in self
-        ).keys()  # originally is types.MappingProxyType
+            (key, value)
+            for key in self
+            for value in setize(self[key])
+            if key in keys or key in values
+        ).keys()
 
     def setdefault(self, __key: Hashable, __default: Optional[Hashable] = None):
         raise NotImplementedError(
@@ -267,6 +285,8 @@ class GraphDict(dict):
     def update(self, __m: Optional[Union[Mapping, Iterable]] = None, **kwargs):
         """
         Overrides default dict update to align with custom __setitem__.
+        When updating from a mapping, the mapping should be a regular dict.
+        For updating from a GraphDict, use the .merge() method.
 
         Parameters
         ----------
@@ -285,17 +305,21 @@ class GraphDict(dict):
             self[k] = v
 
     def merge(self, other: dict[Hashable, Union[Hashable, set[Hashable]]]):
+        """
+        Merges other GraphDict into self.
+
+        Parameters
+        ----------
+        other: GraphDict
+        """
         for key in other:
             other_val = other[key]
 
             if isinstance(other_val, set):
-                dict.__setitem__(
-                    self, key, self.get(key, set()).union(other_val)
-                )
+                for v in other_val:
+                    self[key] = v
             elif other_val is not None:
-                dict.__setitem__(
-                    self, key, self.get(key, set()).add(other_val)
-                )
+                self[key] = other_val
             else:
                 continue
 
@@ -403,4 +427,16 @@ class TwoWayDict(GraphDict):
         """
         raise NotImplementedError(
             "make_loops intentionally not implemented for TwoWayDict. It would destroy the structure."
+        )
+
+    def merge(self, *args, **kwargs):
+        """
+        Overrides merge to not allow merging.
+
+        Raises
+        -------
+        NotImplementedError
+        """
+        raise NotImplementedError(
+            "merge intentionally not implemented for TwoWayDict. self.update() is preferred."
         )

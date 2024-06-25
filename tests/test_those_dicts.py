@@ -174,6 +174,12 @@ def test_graph_dict():
     with pytest.raises(KeyError):
         _ = g["value3"]
 
+    b = GraphDict(key="value", value2="value3")
+    b.update({"key": "value3"})
+    g.merge(b)
+    assert g["key"] == {"value", "value2", "value3"}
+    assert g["value2"] == "value3"
+
 
 def test_big_graph_dict():
     g = GraphDict({k: v for k, v in zip(range(1000), range(1000, 2000))})

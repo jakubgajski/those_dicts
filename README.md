@@ -146,6 +146,32 @@ my_graph_dict.update(flights_from_germany)
 # {katowice: {2, 4}, warsaw: {0, 3}, gdansk: {1}, berlin: {1}, frankfurt: {0}}
 ```
   
-The GraphDict stores each hashable object only once - here everything is a key.
-Values are just index-wise references. This means a lot for storing big objects.
-TODO from .pop to below
+GraphDict stores each hashable object only once - here everything is a key.
+Values are just index-wise references. This means a lot of memory savings for storing big objects.
+  
+GraphDict is compatible with dict, but with a twist(s) enlisted below:  
+  
+- .pop() method is computationally expensive, because forces reindexing all the values. Better to use del instead.
+- del graph_dict_instance\[some_key] removes all links from and to given key, without removing key entry itself. Leaving (disconnected) key entry allows to keep unrelated indices in values as is (no reindexing).  
+- .popitem() method is computationally expensive, because forces reindexing all the values, although not so expensive as .pop() because it returns the last key-value pair.  
+- .keys() method returns a mapping proxy (like dict), but the definition of key here is: a node that has a corresponding value(s) (outgoing connection).  
+- .values() method returns a mapping proxy (like dict), but the definition of value here is: a node that has a corresponding key (incoming connection).  
+- .items() method returns a mapping proxy (like dict), but the definition of item here is: a pair of nodes (key-value manner) for every key that is either in keys() or in values().  
+- .setdefault() raises NotImplementedError - use .get(key, default) instead.  
+- .make_loops(keys: Optional\[Iterable] = None) is new compared to dict - it adds connections to itself for every key provided or to all keys.  
+- .delete_link(key, value) removes directed connection from key to value if exists. Do not influence existence of keys.  
+- .disconnect(key, value) removes connection from key to value and from value to key if exist. Do not influence existence of keys.  
+- .update() shall be used to update GraphDict like you would update regular dict.  
+- .merge() shall be used to update GraphDict with another GraphDict.  
+- .reindex() removes entries that are totally disconnected and updates indices stored in values for all entries (because deletion changes the order of keys).  
+- .get_dict() returns regular dict with meaningful keys (that have other value than None).  
+  
+### TwoWayDict  
+  
+It is a subclass of GraphDict that is restricted to have only exclusive two-way connections.  
+You can access value through its key and other way around.  
+  
+Compared to GraphDict, .merge() and .make_loops() are raising NotImplementedError as those doesn't make sense for this class.  
+
+  
+
