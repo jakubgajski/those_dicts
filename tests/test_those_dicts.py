@@ -1,6 +1,6 @@
 from collections.abc import Iterable
 
-from those_dicts import GraphDict, BatchedDict, TwoWayDict
+from those_dicts import GraphDict, BatchedDict, TwoWayDict, OOMDict
 from itertools import combinations
 import pytest
 
@@ -233,7 +233,25 @@ def test_two_way_dict():
     assert d.get_dict() == d3
 
 
+def test_oom_dict():
+    d = OOMDict(max_ram_entries=10)
+    d.update({str(k): v for k, v in zip(range(1000), range(1000, 2000))})
+
+    assert d['999'] == 1999
+
+    with pytest.raises(KeyError):
+        _ = d['1000']
+
+    b = OOMDict()
+    b.update({str(k): v for k, v in zip(range(1000), range(1000, 2000))})
+
+    with pytest.raises(KeyError):
+        _ = b['1000']
+
+
+
 def test_dict_compatibility():
     examine_dict_compatibility(BatchedDict)
     examine_dict_compatibility(GraphDict)
     examine_dict_compatibility(TwoWayDict)
+    examine_dict_compatibility(OOMDict)

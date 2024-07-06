@@ -1,4 +1,8 @@
-from collections.abc import Mapping, Iterable, Hashable
+import os
+import shelve
+from collections.abc import Mapping, Iterable, Hashable, Generator
+from itertools import chain
+from tempfile import NamedTemporaryFile
 from types import MappingProxyType
 from typing import Any, Union, Optional
 
@@ -81,6 +85,7 @@ class GraphDict(dict):
     a dict subclass for hashable keys and values (everything is a key TBH) that allows efficiently access
     arbitrary destination nodes, based on their source (dict key).
     """
+    # TODO refactor it to use weakref instead of indices
 
     def __init__(self, __m: Optional[Union[Mapping, Iterable]] = None, **kwargs):
         super().__init__()
@@ -217,6 +222,7 @@ class GraphDict(dict):
         -------
         MappingProxyType
         """
+
         def setize(elem):
             if isinstance(elem, set):
                 return elem
@@ -427,11 +433,7 @@ class TwoWayDict(GraphDict):
         item: Hashable
         """
         elem = GraphDict.__getitem__(self, item)
-        return (
-            elem.copy().pop()
-            if elem is not None
-            else elem
-        )
+        return elem.copy().pop() if elem is not None else elem
 
     def make_loops(self, *args, **kwargs):
         """
@@ -456,3 +458,214 @@ class TwoWayDict(GraphDict):
         raise NotImplementedError(
             "merge intentionally not implemented for TwoWayDict. self.update() is preferred."
         )
+
+
+class OOMDict(dict):
+    """
+    A dict subclass that, after exceeding threshold of in-memory entries, stores the rest on the disk.
+    Due to requirements of Python's dbm module in the backend of shelve - only str keys are supported.
+    """
+
+    def __init__(
+        self,
+        __m: Optional[Union[Mapping, Iterable]] = None,
+        max_ram_entries: int = 10000,
+        **kwargs,
+    ):
+        """
+        Parameters
+        ----------
+        __m: Mapping | Iterable | None
+        max_ram_entries: int
+            Specifies the amount of dict entries that will be stored in memory.
+            Any additional entries will be stored on disk.
+        kwargs
+        """
+        super().__init__()
+        self.max_ram_entries = max_ram_entries
+        self.disk_access_indicator = False
+        self.storage = NamedTemporaryFile(mode="r", encoding=None, suffix=".db")
+        with shelve.open(self.storage.name, flag="n") as _:
+            # provides proper encoding
+            ...
+        self.update(__m, **kwargs)
+
+    def __setitem__(self, key: str, value: Any):
+        """
+        Overrides default dict __setitem__ to align with the requirement of
+        storing excess items on the disk.
+
+        Parameters
+        ----------
+        key: str
+        value: Any
+        """
+        if len(self) > self.max_ram_entries and not dict.__contains__(self, key):
+            self.disk_access_indicator = True
+            with shelve.open(self.storage.name) as db:
+                db[key] = value
+        else:
+            dict.__setitem__(self, key, value)
+
+    def __getitem__(self, item: str) -> Any:
+        """
+        Overrides default dict __getitem__ to allow retrieval of items stored on disk.
+
+        Parameters
+        ----------
+        item: str
+
+        Returns
+        -------
+        Any
+        """
+        elem = dict.get(self, item, "__special_indicator__")
+        if elem == "__special_indicator__" and self.disk_access_indicator:
+            with shelve.open(self.storage.name) as db:
+                elem = db[item]
+        elif elem == "__special_indicator__":
+            raise KeyError
+
+        return elem
+
+    def __delitem__(self, key: str):
+        """
+        Overrides default dict __delitem__ to include removal of items stored on disk.
+
+        Parameters
+        ----------
+        key: str
+        """
+        if dict.__contains__(self, key):
+            dict.__delitem__(self, key)
+        else:
+            with shelve.open(self.storage.name) as db:
+                del db[key]
+
+    def __del__(self):
+        """
+        Overrides default dict __del__ to also remove the storage file.
+        """
+        self.storage.close()
+        del self
+
+    def __contains__(self, item: str) -> bool:
+        """
+        Overrides default dict __contains__ to allow checking of items stored on disk.
+
+        Parameters
+        ----------
+        item: str
+
+        Returns
+        -------
+        bool
+        """
+        if dict.__contains__(self, item):
+            return True
+        else:
+            with shelve.open(self.storage.name) as db:
+                return item in db
+
+    def update(self, __m: Optional[Union[Mapping, Iterable]] = None, **kwargs):
+        """
+        Overrides default dict update to align with custom __setitem__.
+
+        Parameters
+        ----------
+        __m: Mapping | Iterable | None
+        **kwargs: Any
+        """
+        if isinstance(__m, Mapping):
+            for k, v in __m.items():
+                self[k] = v
+        elif isinstance(__m, Iterable):
+            for k, v in __m:
+                self[k] = v
+
+        for k, v in kwargs.items():
+            self[k] = v
+
+    def keys(self) -> set[str]:
+        """
+        Overrides default dict keys to allow retrieval of keys stored on disk.
+        As every key is a string, all keys are gathered at once.
+
+        Returns
+        -------
+        set[str]
+        """
+        mem_keys = dict.keys(self)
+        with shelve.open(self.storage.name) as db:
+            return mem_keys | db.keys()
+
+    def values(self) -> Generator:
+        """
+        Overrides default dict values to allow retrieval of values stored on disk.
+        Due to possibly very large memory consumption, returns a generator.
+
+        Returns
+        -------
+        Generator
+        """
+        mem_vals = dict.values(self)
+        with shelve.open(self.storage.name) as db:
+            yield from chain(mem_vals, db.values())
+
+    def items(self) -> Generator:
+        """
+        Overrides default dict items to allow retrieval of items stored on disk.
+        Due to possibly very large memory consumption, returns a generator.
+
+        Returns
+        -------
+        Generator
+        """
+        mem_items = dict.items(self)
+        with shelve.open(self.storage.name) as db:
+            yield from chain(mem_items, db.items())
+
+    def pop(self, __key: str) -> Any:
+        """
+        Overrides default dict pop to account for values stored on disk.
+
+        Parameters
+        ----------
+        __key: str
+
+        Returns
+        -------
+        Any
+        """
+        if dict.__contains__(self, __key):
+            return dict.pop(self, __key)
+        else:
+            with shelve.open(self.storage.name) as db:
+                return db.pop(__key)
+
+    def popitem(self) -> tuple[str, Any]:
+        """
+        Overrides default dict popitem to account for items stored on disk.
+
+        Returns
+        -------
+        tuple[str, Any]
+        """
+        if self.disk_access_indicator:
+            with shelve.open(self.storage.name) as db:
+                if len(db):
+                    return db.popitem()
+
+        return dict.popitem(self)
+
+    def persist(self, path: str | os.PathLike):
+        """
+        Persists the dictionary to disk.
+
+        Parameters
+        ----------
+        path: str | os.PathLike
+        """
+        with shelve.open(path) as db, shelve.open(self.storage.name) as self_db:
+            db.update(self)
+            db.update(self_db)

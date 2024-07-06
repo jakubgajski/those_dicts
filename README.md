@@ -14,7 +14,7 @@ pip install those-dicts
 Below you may find examples of behavior under normal dist-style usage of those_dicts. Essentially those are dicts but with a twist.  
   
 ```python
-from those_dicts import BatchedDict, GraphDict, TwoWayDict
+from those_dicts import BatchedDict, GraphDict, TwoWayDict, OOMDict
 
 my_batched_dict = BatchedDict(nested=True)
 client1 = dict(name='Lieutenant', surname='Kowalski',
@@ -49,6 +49,14 @@ my_twoway_dict.update(new_marriage_after_divorce)
 # True
 # >>> my_twoway_dict[('Eric', 'Doe')] is None
 # True
+
+from some_lib import ObjWithDefinedSize
+
+my_oom_dict = OOMDict(max_ram_entries=10)
+my_oom_dict.update([str(k): ObjWithDefinedSize(mb_size=k) for k in range(1000)])
+# first 10 objects are in RAM, the rest is on the disk
+
+del my_oom_dict # clears the disk also
 ```
   
 ### Getting Started  
@@ -172,6 +180,21 @@ It is a subclass of GraphDict that is restricted to have only exclusive two-way 
 You can access value through its key and other way around.  
   
 Compared to GraphDict, .merge() and .make_loops() are raising NotImplementedError as those doesn't make sense for this class.  
-
   
+### OOMDict  
+  
+When you want to limit impact on RAM.  
+  
+```python
+from those_dicts import OOMDict
+
+my_oom_dict = OOMDict(max_ram_entries=10000)  # the default
+
+for name, big_obj in big_obj_generator(num_obj=1000000):
+    my_oom_dict[name] = big_obj
+
+# everything above 10000 objects will be stored on the disk
+```  
+  
+Even if storage is split between RAM and disk, it is just a dict, so use it as usual.  
 
