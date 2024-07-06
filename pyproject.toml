@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "those-dicts"
-version = "0.1.0"
+version = "0.1.1"
 description = "Those missing flavors of dict"
 authors = ["Jakub Gajski <jakub.gajski@gmail.com>"]
 license = "MIT"
