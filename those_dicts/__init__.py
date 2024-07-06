@@ -131,7 +131,7 @@ class GraphDict(dict):
         for _key in self:
             dict.__getitem__(self, _key).discard(del_idx)
 
-    def __getitem__(self, item: Hashable):
+    def __getitem__(self, item: Hashable) -> Union[set, None]:
         """
         Overrides default dict __getitem__ to return a set of nodes or a single node.
 
@@ -140,12 +140,12 @@ class GraphDict(dict):
         item: Hashable
         """
         targets = dict.__getitem__(self, item)
-        if len(targets) > 1:
+        if len(targets):
             return set(list(self)[idx] for idx in targets)
-        elif len(targets) == 1:
-            return list(self)[targets.copy().pop()]
         else:
             return None
+
+        # return set(list(self)[idx] for idx in targets)
 
     def pop(self, __key: Hashable) -> Union[Hashable, set[Hashable]]:
         """
@@ -217,12 +217,13 @@ class GraphDict(dict):
         -------
         MappingProxyType
         """
-
-        def setize(x):
-            if isinstance(x, set):
-                return x
+        def setize(elem):
+            if isinstance(elem, set):
+                return elem
+            elif elem is None:
+                return set()
             else:
-                return {x}
+                return {elem}
 
         keys = self.keys()
         values = self.values()
@@ -416,6 +417,21 @@ class TwoWayDict(GraphDict):
         val = self[key]
         dict.__setitem__(self, key, set())
         dict.__setitem__(self, val, set())
+
+    def __getitem__(self, item: Hashable) -> Hashable:
+        """
+        Overrides GraphDict __getitem__ to return the first value in the set.
+
+        Parameters
+        ----------
+        item: Hashable
+        """
+        elem = GraphDict.__getitem__(self, item)
+        return (
+            elem.copy().pop()
+            if elem is not None
+            else elem
+        )
 
     def make_loops(self, *args, **kwargs):
         """

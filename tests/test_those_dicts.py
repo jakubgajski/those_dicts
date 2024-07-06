@@ -38,7 +38,7 @@ def examine_dict_compatibility(d: type):
     del d["a"]
     if "a" in d:
         if d["a"] is not None:
-            raise ValueError("Failed to delete item.")
+            raise ValueError(f"Failed to delete item. {d['a']}")
 
     # __contains__
     if "b" not in d:
@@ -160,17 +160,17 @@ def test_graph_dict():
     g.update({"key": "value3"})
     g["value3"] = "key"
     assert g["key"] == {"value", "value2", "value3"}
-    assert g["value3"] == "key"
+    assert g["value3"] == {"key"}
 
     g.delete_link("key", "value")
     assert g["key"] == {"value2", "value3"}
 
     g.disconnect("key", "value3")
-    assert g["key"] == "value2"
+    assert g["key"] == {"value2"}
     assert g["value3"] is None
 
     g.reindex()
-    assert g.get_dict() == {"key": "value2"}
+    assert g.get_dict() == {"key": {"value2"}}
     with pytest.raises(KeyError):
         _ = g["value3"]
 
@@ -178,23 +178,23 @@ def test_graph_dict():
     b.update({"key": "value3"})
     g.merge(b)
     assert g["key"] == {"value", "value2", "value3"}
-    assert g["value2"] == "value3"
+    assert g["value2"] == {"value3"}
 
 
 def test_big_graph_dict():
     g = GraphDict({k: v for k, v in zip(range(1000), range(1000, 2000))})
     g.update({k: v for k, v in zip(range(1000, 2000), range(2000, 3000))})
     g.update({k: v for k, v in zip(range(1000, 3000), range(3000, 5000))})
-    assert g[0] == 1000
+    assert g[0] == {1000}
     assert g[1000] == {2000, 3000}
-    assert g[2000] == 4000
+    assert g[2000] == {4000}
 
     g.disconnect(0, 1000)
     g.disconnect(1000, 2000)
     del g[2500]
     assert g[0] is None
     assert g[2500] is None
-    assert g[1000] == 3000
+    assert g[1000] == {3000}
 
     g.disconnect(1000, 3000)
     g.disconnect(2000, 4000)
@@ -206,12 +206,12 @@ def test_big_graph_dict():
         _ = g[1000]
     with pytest.raises(KeyError):
         _ = g[2000]
-    assert g[2500] == 2500
+    assert g[2500] == {2500}
 
     dikt = g.get_dict()
     assert g[1001] == {2001, 3001} == dikt[1001]
-    assert g[1] == 1001 == dikt[1]
-    assert g[2999] == 4999 == dikt[2999]
+    assert g[1] == {1001} == dikt[1]
+    assert g[2999] == {4999} == dikt[2999]
 
 
 def test_two_way_dict():
