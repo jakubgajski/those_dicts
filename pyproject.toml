@@ -26,6 +26,12 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["those_dicts"]
 
+[tool.hatch.build.targets.sdist]
+# hatchling would otherwise ship everything git does not ignore (CLAUDE.md, uv.lock,
+# .pre-commit-config.yaml). Matches the shape Poetry published up to 0.1.1.
+include = ["those_dicts", "README.md"]
+exclude = [".gitignore"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
