@@ -1,3 +1,5 @@
+import sqlite3
+import time
 from collections.abc import Iterable
 
 from those_dicts import GraphDict, BatchedDict, TwoWayDict, OOMDict
@@ -248,6 +250,71 @@ def test_oom_dict():
     with pytest.raises(KeyError):
         _ = b['1000']
 
+
+
+def test_graph_dict_scales_linearly():
+    """
+    GraphDict positions used to be resolved with list(self).index(...), so every insert was O(n)
+    and a build was O(n**2), while every lookup rebuilt the whole key list. Both are O(1) now.
+    Bounds are absolute and very loose on purpose: the point is to fail loudly if the quadratic
+    behaviour comes back (which needed ~30s for this n), not to benchmark the machine.
+    """
+    n = 50_000
+
+    start = time.perf_counter()
+    g = GraphDict({k: k + n for k in range(n)})
+    build = time.perf_counter() - start
+
+    start = time.perf_counter()
+    for k in range(1000):
+        _ = g[k]
+    lookups = time.perf_counter() - start
+
+    assert build < 5, f"{n} inserts took {build:.1f}s - build is super-linear again"
+    assert lookups < 0.1, f"1000 lookups took {lookups:.3f}s - lookup is linear again"
+
+    # and it is still a correct graph
+    assert g[0] == {n}
+    assert g[n - 1] == {2 * n - 1}
+    assert len(g.keys()) == n
+
+
+def test_oom_dict_disk_keys_and_persist(tmp_path):
+    d = OOMDict(max_ram_entries=5)
+    d.update({k: [k] * 3 for k in range(50)})  # int keys and list values, both spill to disk
+
+    assert d[49] == [49] * 3
+    assert len(d) == 50
+    assert 49 in d
+    assert 999 not in d
+    assert d.keys() == set(range(50))
+    assert sum(1 for _ in d.items()) == 50
+    assert sorted(v[0] for v in d.values()) == list(range(50))
+
+    del d[49]
+    assert 49 not in d
+    assert d.pop(48) == [48] * 3
+    assert len(d) == 48
+    with pytest.raises(KeyError):
+        _ = d[48]
+
+    target = tmp_path / "persisted.sqlite3"
+    d.persist(target)
+    db = sqlite3.connect(target)
+    try:
+        assert db.execute("SELECT count(*) FROM kv").fetchone()[0] == 48
+    finally:
+        db.close()
+
+    d.clear()
+    assert len(d) == 0
+    assert not d
+
+    # keys that SQLite cannot index are refused, but only once they actually have to spill
+    e = OOMDict(max_ram_entries=0)
+    e[("tuple", "key")] = 1
+    with pytest.raises(TypeError):
+        e[("another", "key")] = 2
 
 
 def test_dict_compatibility():

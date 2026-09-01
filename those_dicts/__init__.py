@@ -1,10 +1,14 @@
 import os
-import shelve
-from collections.abc import Mapping, Iterable, Hashable, Generator
-from itertools import chain
-from tempfile import NamedTemporaryFile
-from types import MappingProxyType
+import pickle
+import sqlite3
+from collections.abc import Mapping, Iterable, Hashable, Generator, KeysView
+from tempfile import mkstemp
 from typing import Any, Union, Optional
+
+#: distinguishes "absent" from a stored None, without colliding with any real value
+_MISSING = object()
+
+_KV_SCHEMA = "CREATE TABLE IF NOT EXISTS kv (key NOT NULL PRIMARY KEY, value BLOB) WITHOUT ROWID"
 
 
 class BatchedDict(dict):
@@ -89,7 +93,26 @@ class GraphDict(dict):
 
     def __init__(self, __m: Optional[Union[Mapping, Iterable]] = None, **kwargs):
         super().__init__()
+        # Values are positions in the dict's insertion order. These two mirror that order so
+        # position lookups are O(1); without them every set/get/delete scanned list(self),
+        # which made building a graph O(n**2).
+        self._keys: list = []  # position -> node
+        self._idx: dict = {}  # node -> position
         self.update(__m, **kwargs)
+
+    def _add_node(self, node: Hashable, targets: Any):
+        """
+        dict.__setitem__ for a node that is not present yet, keeping the position index in sync.
+        Only for new nodes: appending is what defines the node's position.
+
+        Parameters
+        ----------
+        node: Hashable
+        targets: Any
+        """
+        self._idx[node] = len(self._keys)
+        self._keys.append(node)
+        dict.__setitem__(self, node, targets)
 
     def __setitem__(self, key: Hashable, value: Hashable):
         """
@@ -106,21 +129,21 @@ class GraphDict(dict):
             raise TypeError("Key cannot be None!")
 
         if key in self and value in self:
-            dict.__getitem__(self, key).update({list(self).index(value)})
+            dict.__getitem__(self, key).update({self._idx[value]})
         elif key in self and value not in self:
             if value is not None:
-                dict.__setitem__(self, value, set())
-                dict.__getitem__(self, key).update({list(self).index(value)})
+                self._add_node(value, set())
+                dict.__getitem__(self, key).update({self._idx[value]})
             else:
                 pass
         elif key not in self and value in self:
-            dict.__setitem__(self, key, {list(self).index(value)})
+            self._add_node(key, {self._idx[value]})
         else:
             if value is not None:
-                dict.__setitem__(self, value, set())
-                dict.__setitem__(self, key, {list(self).index(value)})
+                self._add_node(value, set())
+                self._add_node(key, {self._idx[value]})
             else:
-                dict.__setitem__(self, key, set())
+                self._add_node(key, set())
 
     def __delitem__(self, key: Hashable):
         """
@@ -130,7 +153,7 @@ class GraphDict(dict):
         ----------
         key: Hashable
         """
-        del_idx = list(self).index(key)
+        del_idx = self._idx[key]
         # dict.__delitem__(self, key)  # changes indices!
         dict.__setitem__(self, key, set())  # keeps indices but also a lone node
         for _key in self:
@@ -146,11 +169,9 @@ class GraphDict(dict):
         """
         targets = dict.__getitem__(self, item)
         if len(targets):
-            return set(list(self)[idx] for idx in targets)
+            return set(self._keys[idx] for idx in targets)
         else:
             return None
-
-        # return set(list(self)[idx] for idx in targets)
 
     def pop(self, __key: Hashable) -> Union[Hashable, set[Hashable]]:
         """
@@ -177,16 +198,26 @@ class GraphDict(dict):
         -------
         tuple
         """
-        key = list(self)[-1]
+        key = self._keys[-1]
         val = self[key]
         idx = len(self) - 1
         dict.__delitem__(self, key)
+        self._keys.pop()
+        del self._idx[key]
         for k in self:
             dict.__getitem__(self, k).discard(idx)
 
         return key, val
 
-    def keys(self) -> MappingProxyType:
+    def clear(self):
+        """
+        Overrides default dict clear to also reset the position index.
+        """
+        dict.clear(self)
+        self._keys.clear()
+        self._idx.clear()
+
+    def keys(self) -> KeysView:
         """
         Overrides default dict keys to return only keys that holds a value.
         So the definition of key becomes: a node that has a corresponding value(s) (outgoing connection).
@@ -194,11 +225,11 @@ class GraphDict(dict):
 
         Returns
         -------
-        MappingProxyType
+        KeysView
         """
         return dict.fromkeys(key for key in self if self[key] is not None).keys()
 
-    def values(self) -> MappingProxyType:
+    def values(self) -> KeysView:
         """
         Overrides default dict values to return only entries that have a key referring to it.
         So the definition of value becomes: a node that has a corresponding key (incoming connection).
@@ -206,21 +237,20 @@ class GraphDict(dict):
 
         Returns
         -------
-        MappingProxyType
+        KeysView
         """
-        self_list = list(self)
-        has_key = set(self_list[k] for key in self for k in dict.__getitem__(self, key))
+        has_key = set(self._keys[k] for key in self for k in dict.__getitem__(self, key))
         has_key = [key for key in has_key]
         return dict.fromkeys(has_key).keys()
 
-    def items(self) -> MappingProxyType:
+    def items(self) -> KeysView:
         """
         Overrides default dict items to align with the union of definitions of keys() and values() defined above.
         Returns every connected pair of nodes (key-value manner) for every key that is either in keys() or in values().
 
         Returns
         -------
-        MappingProxyType
+        KeysView
         """
 
         def setize(elem):
@@ -274,7 +304,7 @@ class GraphDict(dict):
         else:
             current = dict.__getitem__(self, key)
             if value in self:
-                current.discard(list(self).index(value))
+                current.discard(self._idx[value])
             dict.__setitem__(self, key, current)
 
     def disconnect(self, key1: Hashable, key2: Hashable):
@@ -336,7 +366,7 @@ class GraphDict(dict):
         """
         no_destination_ids = set(
             [
-                list(self).index(k)
+                self._idx[k]
                 for k, v in filter(lambda kv: len(kv[1]) == 0, dict.items(self))
             ]
         )
@@ -364,7 +394,11 @@ class GraphDict(dict):
                 dict.__setitem__(self, k, new_v)
 
             for i in lone_indices[::-1]:
-                dict.__delitem__(self, list(self)[i])
+                dict.__delitem__(self, self._keys[i])
+
+            # deletion is the only thing that shifts positions
+            self._keys = list(self)
+            self._idx = {k: i for i, k in enumerate(self._keys)}
 
     def get_dict(self) -> dict[Hashable, Union[Hashable, set[Hashable]]]:
         """
@@ -397,20 +431,20 @@ class TwoWayDict(GraphDict):
 
         if key in self and value in self:
             self.disconnect(key, value)
-            dict.__setitem__(self, key, {list(self).index(value)})
-            dict.__setitem__(self, value, {list(self).index(key)})
+            dict.__setitem__(self, key, {self._idx[value]})
+            dict.__setitem__(self, value, {self._idx[key]})
         elif key in self and value not in self:
             self.disconnect(key, self[key])
-            dict.__setitem__(self, value, {list(self).index(key)})
-            dict.__setitem__(self, key, {list(self).index(value)})
+            self._add_node(value, {self._idx[key]})
+            dict.__setitem__(self, key, {self._idx[value]})
         elif key not in self and value in self:
             self.disconnect(value, self[value])
-            dict.__setitem__(self, key, {list(self).index(value)})
-            dict.__setitem__(self, value, {list(self).index(key)})
+            self._add_node(key, {self._idx[value]})
+            dict.__setitem__(self, value, {self._idx[key]})
         else:
-            dict.__setitem__(self, value, "")
-            dict.__setitem__(self, key, {list(self).index(value)})
-            dict.__setitem__(self, value, {list(self).index(key)})
+            self._add_node(value, "")
+            self._add_node(key, {self._idx[value]})
+            dict.__setitem__(self, value, {self._idx[key]})
 
     def __delitem__(self, key: Hashable):
         """
@@ -463,8 +497,14 @@ class TwoWayDict(GraphDict):
 class OOMDict(dict):
     """
     A dict subclass that, after exceeding threshold of in-memory entries, stores the rest on the disk.
-    Due to requirements of Python's dbm module in the backend of shelve - only str keys are supported.
+    The disk half is a temporary SQLite database, so keys that spill to disk must be of a type SQLite
+    indexes natively: str, int, float, bytes (bool counts, SQLite stores it as int). Values may be
+    anything picklable. Keys that never leave RAM are unrestricted, as in a regular dict.
+    Not thread-safe: the SQLite connection is bound to the creating thread.
     """
+
+    #: key types SQLite can store and index directly
+    DISK_KEY_TYPES = (str, int, float, bytes)
 
     def __init__(
         self,
@@ -484,78 +524,133 @@ class OOMDict(dict):
         super().__init__()
         self.max_ram_entries = max_ram_entries
         self.disk_access_indicator = False
-        self.storage = NamedTemporaryFile(mode="r", encoding=None, suffix=".db")
-        with shelve.open(self.storage.name, flag="n") as _:
-            # provides proper encoding
-            ...
+        fd, self.storage = mkstemp(suffix=".sqlite3")
+        os.close(fd)
+        self._db = sqlite3.connect(self.storage)
+        self._db.execute(_KV_SCHEMA)
         self.update(__m, **kwargs)
 
-    def __setitem__(self, key: str, value: Any):
+    def _disk_key(self, key: Any) -> Any:
+        """
+        Validates that a key can be stored on disk.
+
+        Parameters
+        ----------
+        key: Any
+
+        Returns
+        -------
+        Any
+        """
+        if not isinstance(key, self.DISK_KEY_TYPES):
+            raise TypeError(
+                f"Keys stored on disk must be one of "
+                f"{tuple(t.__name__ for t in self.DISK_KEY_TYPES)}, got {type(key).__name__}."
+            )
+        return key
+
+    def _on_disk(self, key: Any) -> bool:
+        """
+        Whether a lookup for key could possibly hit the disk half.
+
+        Parameters
+        ----------
+        key: Any
+
+        Returns
+        -------
+        bool
+        """
+        return self.disk_access_indicator and isinstance(key, self.DISK_KEY_TYPES)
+
+    def __setitem__(self, key: Any, value: Any):
         """
         Overrides default dict __setitem__ to align with the requirement of
         storing excess items on the disk.
 
         Parameters
         ----------
-        key: str
+        key: Any
         value: Any
         """
-        if len(self) > self.max_ram_entries and not dict.__contains__(self, key):
+        if dict.__len__(self) > self.max_ram_entries and not dict.__contains__(self, key):
             self.disk_access_indicator = True
-            with shelve.open(self.storage.name) as db:
-                db[key] = value
+            self._db.execute(
+                "INSERT OR REPLACE INTO kv VALUES (?, ?)",
+                (self._disk_key(key), pickle.dumps(value)),
+            )
+            self._db.commit()
         else:
             dict.__setitem__(self, key, value)
 
-    def __getitem__(self, item: str) -> Any:
+    def __getitem__(self, item: Any) -> Any:
         """
         Overrides default dict __getitem__ to allow retrieval of items stored on disk.
 
         Parameters
         ----------
-        item: str
+        item: Any
 
         Returns
         -------
         Any
         """
-        elem = dict.get(self, item, "__special_indicator__")
-        if elem == "__special_indicator__" and self.disk_access_indicator:
-            with shelve.open(self.storage.name) as db:
-                elem = db[item]
-        elif elem == "__special_indicator__":
-            raise KeyError
+        elem = dict.get(self, item, _MISSING)
+        if elem is not _MISSING:
+            return elem
 
-        return elem
+        if self._on_disk(item):
+            row = self._db.execute(
+                "SELECT value FROM kv WHERE key = ?", (item,)
+            ).fetchone()
+            if row is not None:
+                return pickle.loads(row[0])
 
-    def __delitem__(self, key: str):
+        raise KeyError(item)
+
+    def __delitem__(self, key: Any):
         """
         Overrides default dict __delitem__ to include removal of items stored on disk.
 
         Parameters
         ----------
-        key: str
+        key: Any
         """
         if dict.__contains__(self, key):
             dict.__delitem__(self, key)
-        else:
-            with shelve.open(self.storage.name) as db:
-                del db[key]
+            return
+
+        if self._on_disk(key):
+            cursor = self._db.execute("DELETE FROM kv WHERE key = ?", (key,))
+            self._db.commit()
+            if cursor.rowcount:
+                return
+
+        raise KeyError(key)
 
     def __del__(self):
         """
         Overrides default dict __del__ to also remove the storage file.
         """
-        self.storage.close()
-        del self
+        # __init__ may have failed part way through, so nothing here is guaranteed to exist
+        database = getattr(self, "_db", None)
+        if database is not None:
+            database.close()
 
-    def __contains__(self, item: str) -> bool:
+        path = getattr(self, "storage", None)
+        if path is not None:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+
+    def __contains__(self, item: Any) -> bool:
         """
         Overrides default dict __contains__ to allow checking of items stored on disk.
 
         Parameters
         ----------
-        item: str
+        item: Any
 
         Returns
         -------
@@ -563,9 +658,30 @@ class OOMDict(dict):
         """
         if dict.__contains__(self, item):
             return True
-        else:
-            with shelve.open(self.storage.name) as db:
-                return item in db
+
+        if self._on_disk(item):
+            return (
+                self._db.execute(
+                    "SELECT 1 FROM kv WHERE key = ?", (item,)
+                ).fetchone()
+                is not None
+            )
+
+        return False
+
+    def __len__(self) -> int:
+        """
+        Overrides default dict __len__ to count items stored on disk as well.
+
+        Returns
+        -------
+        int
+        """
+        length = dict.__len__(self)
+        if self.disk_access_indicator:
+            length += self._db.execute("SELECT count(*) FROM kv").fetchone()[0]
+
+        return length
 
     def update(self, __m: Optional[Union[Mapping, Iterable]] = None, **kwargs):
         """
@@ -586,18 +702,29 @@ class OOMDict(dict):
         for k, v in kwargs.items():
             self[k] = v
 
-    def keys(self) -> set[str]:
+    def clear(self):
+        """
+        Overrides default dict clear to also drop the items stored on disk.
+        """
+        dict.clear(self)
+        self._db.execute("DELETE FROM kv")
+        self._db.commit()
+        self.disk_access_indicator = False
+
+    def keys(self) -> set:
         """
         Overrides default dict keys to allow retrieval of keys stored on disk.
-        As every key is a string, all keys are gathered at once.
+        Keys are gathered at once, as they are small compared to the values.
 
         Returns
         -------
-        set[str]
+        set
         """
-        mem_keys = dict.keys(self)
-        with shelve.open(self.storage.name) as db:
-            return mem_keys | db.keys()
+        all_keys = set(dict.keys(self))
+        if self.disk_access_indicator:
+            all_keys |= {key for (key,) in self._db.execute("SELECT key FROM kv")}
+
+        return all_keys
 
     def values(self) -> Generator:
         """
@@ -608,9 +735,10 @@ class OOMDict(dict):
         -------
         Generator
         """
-        mem_vals = dict.values(self)
-        with shelve.open(self.storage.name) as db:
-            yield from chain(mem_vals, db.values())
+        yield from dict.values(self)
+        if self.disk_access_indicator:
+            for (value,) in self._db.execute("SELECT value FROM kv"):
+                yield pickle.loads(value)
 
     def items(self) -> Generator:
         """
@@ -621,17 +749,18 @@ class OOMDict(dict):
         -------
         Generator
         """
-        mem_items = dict.items(self)
-        with shelve.open(self.storage.name) as db:
-            yield from chain(mem_items, db.items())
+        yield from dict.items(self)
+        if self.disk_access_indicator:
+            for key, value in self._db.execute("SELECT key, value FROM kv"):
+                yield key, pickle.loads(value)
 
-    def pop(self, __key: str) -> Any:
+    def pop(self, __key: Any) -> Any:
         """
         Overrides default dict pop to account for values stored on disk.
 
         Parameters
         ----------
-        __key: str
+        __key: Any
 
         Returns
         -------
@@ -639,33 +768,52 @@ class OOMDict(dict):
         """
         if dict.__contains__(self, __key):
             return dict.pop(self, __key)
-        else:
-            with shelve.open(self.storage.name) as db:
-                return db.pop(__key)
 
-    def popitem(self) -> tuple[str, Any]:
+        value = self[__key]  # raises KeyError if it is nowhere
+        del self[__key]
+        return value
+
+    def popitem(self) -> tuple:
         """
         Overrides default dict popitem to account for items stored on disk.
 
         Returns
         -------
-        tuple[str, Any]
+        tuple
         """
         if self.disk_access_indicator:
-            with shelve.open(self.storage.name) as db:
-                if len(db):
-                    return db.popitem()
+            row = self._db.execute("SELECT key, value FROM kv LIMIT 1").fetchone()
+            if row is not None:
+                self._db.execute("DELETE FROM kv WHERE key = ?", (row[0],))
+                self._db.commit()
+                return row[0], pickle.loads(row[1])
 
         return dict.popitem(self)
 
-    def persist(self, path: str | os.PathLike):
+    def persist(self, path: Union[str, os.PathLike]):
         """
-        Persists the dictionary to disk.
+        Persists the dictionary to disk, as a SQLite database of pickled values.
+        Every key has to satisfy the disk key type restriction, including the ones held in RAM.
 
         Parameters
         ----------
         path: str | os.PathLike
         """
-        with shelve.open(path) as db, shelve.open(self.storage.name) as self_db:
-            db.update(self)
-            db.update(self_db)
+        database = sqlite3.connect(path)
+        try:
+            database.execute(_KV_SCHEMA)
+            database.executemany(
+                "INSERT OR REPLACE INTO kv VALUES (?, ?)",
+                (
+                    (self._disk_key(k), pickle.dumps(v))
+                    for k, v in dict.items(self)
+                ),
+            )
+            if self.disk_access_indicator:
+                database.executemany(
+                    "INSERT OR REPLACE INTO kv VALUES (?, ?)",
+                    self._db.execute("SELECT key, value FROM kv"),
+                )
+            database.commit()
+        finally:
+            database.close()

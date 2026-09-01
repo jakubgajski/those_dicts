@@ -162,9 +162,9 @@ GraphDict is compatible with dict, but with a twist(s) enlisted below:
 - .pop() method is computationally expensive, because forces reindexing all the values. Better to use del instead.
 - del graph_dict_instance\[some_key] removes all links from and to given key, without removing key entry itself. Leaving (disconnected) key entry allows to keep unrelated indices in values as is (no reindexing).  
 - .popitem() method is computationally expensive, because forces reindexing all the values, although not so expensive as .pop() because it returns the last key-value pair.  
-- .keys() method returns a mapping proxy (like dict), but the definition of key here is: a node that has a corresponding value(s) (outgoing connection).  
-- .values() method returns a mapping proxy (like dict), but the definition of value here is: a node that has a corresponding key (incoming connection).  
-- .items() method returns a mapping proxy (like dict), but the definition of item here is: a pair of nodes (key-value manner) for every key that is either in keys() or in values().  
+- .keys() method returns a keys view (like dict), but the definition of key here is: a node that has a corresponding value(s) (outgoing connection).  
+- .values() method returns a keys view (like dict), but the definition of value here is: a node that has a corresponding key (incoming connection).  
+- .items() method returns a keys view (like dict), but the definition of item here is: a pair of nodes (key-value manner) for every key that is either in keys() or in values().  
 - .setdefault() raises NotImplementedError - use .get(key, default) instead.  
 - .make_loops(keys: Optional\[Iterable] = None) is new compared to dict - it adds connections to itself for every key provided or to all keys.  
 - .delete_link(key, value) removes directed connection from key to value if exists. Do not influence existence of keys.  
@@ -194,7 +194,17 @@ for name, big_obj in big_obj_generator(num_obj=1000000):
     my_oom_dict[name] = big_obj
 
 # everything above 10000 objects will be stored on the disk
+
+my_oom_dict.persist('my_dict.sqlite3')  # keep it after the process exits
 ```  
   
 Even if storage is split between RAM and disk, it is just a dict, so use it as usual.  
+  
+The disk half is a temporary SQLite database (stdlib `sqlite3`, still zero dependencies), so:  
+  
+- keys that spill to disk must be a type SQLite indexes natively: `str`, `int`, `float` or `bytes`. Keys that never leave RAM are unrestricted, like in a regular dict. Exceeding `max_ram_entries` with an unsupported key type raises TypeError.  
+- values may be anything picklable.  
+- `len()`, `.keys()` and `in` account for both halves. `.values()` and `.items()` are generators, because the disk half may not fit in memory.  
+- `.persist(path)` writes both halves to a SQLite database at path, with pickled values.  
+- an instance is bound to the thread that created it (SQLite connections are not shared across threads).  
 

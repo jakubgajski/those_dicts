@@ -1,13 +1,8 @@
 repos:
-  - repo: local
+  - repo: https://github.com/facebook/pyrefly-pre-commit
+    rev: 1.2.0
     hooks:
       - id: pyrefly-check
-        name: pyrefly check
-        # Mirrors the upstream facebook/pyrefly-pre-commit hook, but runs in this project's
-        # uv environment so it checks against the same locked deps the tests use. The upstream
-        # hook builds its own env, which would need every test dependency duplicated here.
-        entry: uv run pyrefly check
-        language: system
-        types_or: [python, pyi]
-        pass_filenames: false
-        require_serial: true
+        # pre-commit builds its own isolated env for this hook, so it must be told about
+        # anything the checked code imports. Keep in sync with the dev group in pyproject.toml.
+        additional_dependencies: ["pytest>=8.0.1"]

@@ -1,26 +1,40 @@
-[tool.poetry]
+[project]
 name = "those-dicts"
-version = "0.1.1post"
+version = "0.2.0"
 description = "Those missing flavors of dict"
-authors = ["Jakub Gajski <jakub.gajski@gmail.com>"]
+authors = [{ name = "Jakub Gajski", email = "jakub.gajski@gmail.com" }]
 license = "MIT"
 readme = "README.md"
-repository = "https://github.com/jakubgajski/those_dicts"
+requires-python = ">=3.9"
 keywords = ["graph", "batch", "two way", "dict", "dicts", "data structures", "lightweight"]
-packages = [
-    { include = "those_dicts" },
+dependencies = []
+
+[project.urls]
+Repository = "https://github.com/jakubgajski/those_dicts"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.1",
+    "pyrefly>=1.2.0",
+    "pre-commit>=3.5.0",
 ]
 
-
-[tool.poetry.group.test]
-
-
-[tool.poetry.dependencies]
-python = "^3.9"
-[tool.poetry.group.test.dependencies]
-pytest = "^8.0.1"
-
-
 [build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["those_dicts"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.pyrefly]
+project-includes = ["those_dicts", "tests"]
+python-version = "3.9"
+
+[tool.pyrefly.errors]
+# Every class here deliberately changes the signature or semantics it inherits from dict
+# (keys/values/items are redefined graph-wise, update/pop follow the custom __setitem__).
+# That divergence is the library, not a mistake, so the check is off project-wide.
+bad-override = false
